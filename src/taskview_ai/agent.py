@@ -3,7 +3,7 @@ from openai import AsyncOpenAI
 
 from .config import Settings
 from .schemas import PlanRequest, PurposeSpec, TransformPlanItem, ViewPlan
-from .tools import get_privacy_transform, search_data_catalog
+from .tools import CATALOG, get_privacy_transform, search_data_catalog
 
 INSTRUCTIONS = """
 당신은 TaskView의 단일 오케스트레이터 Agent다. 사용자의 업무 목적을 실행 가능한 View 계획으로 바꾼다.
@@ -62,6 +62,23 @@ def _fake_plan(request: PlanRequest) -> ViewPlan:
     )
 
 
+def _is_catalog_safe(plan: ViewPlan) -> bool:
+    if not plan.selected_sources:
+        return False
+    produced_columns = {
+        item.output_field for item in plan.transformations if item.transformation != "drop"
+    } | {"case_count"}
+    if not set(plan.preview_columns).issubset(produced_columns):
+        return False
+    for item in plan.transformations:
+        if item.source not in plan.selected_sources:
+            return False
+        catalog_fields = set(CATALOG[item.source]["fields"])
+        if not set(item.input_fields).issubset(catalog_fields):
+            return False
+    return True
+
+
 async def build_view_plan(request: PlanRequest, settings: Settings) -> ViewPlan:
     if settings.taskview_ai_fake_mode:
         return _fake_plan(request)
@@ -85,5 +102,13 @@ async def build_view_plan(request: PlanRequest, settings: Settings) -> ViewPlan:
         ),
         max_turns=6,
     )
-    return result.final_output
+    plan = result.final_output
+    if _is_catalog_safe(plan):
+        return plan
 
+    safe_plan = _fake_plan(request)
+    safe_plan.assumptions.insert(
+        0,
+        "로컬 모델 출력이 데이터 카탈로그 검증에 실패해 보수적인 최소 계획을 적용했다",
+    )
+    return safe_plan
