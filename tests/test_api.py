@@ -1,9 +1,13 @@
+import asyncio
+
+from agents import Runner
+from agents.exceptions import ModelBehaviorError
 from fastapi.testclient import TestClient
 
-from taskview_ai.agent import _is_catalog_safe
-from taskview_ai.config import get_settings
+from taskview_ai.agent import _is_catalog_safe, build_view_plan
+from taskview_ai.config import Settings, get_settings
 from taskview_ai.main import app
-from taskview_ai.schemas import PurposeSpec, TransformPlanItem, ViewPlan
+from taskview_ai.schemas import PlanRequest, PurposeSpec, TransformPlanItem, ViewPlan
 
 
 def test_health_and_plan(monkeypatch):
@@ -54,3 +58,23 @@ def test_catalog_guard_rejects_hallucinated_plan():
     )
 
     assert _is_catalog_safe(plan) is False
+
+
+def test_model_behavior_error_uses_safe_plan(monkeypatch):
+    async def invalid_structured_output(*_args, **_kwargs):
+        raise ModelBehaviorError("model returned fenced JSON with the wrong schema")
+
+    monkeypatch.setattr(Runner, "run", invalid_structured_output)
+    request = PlanRequest(
+        purpose="VOC를 지역과 이슈별로 묶어 다음 스프린트 우선순위를 정하고 싶다",
+        audience="product",
+        ttl_days=7,
+    )
+
+    plan = asyncio.run(
+        build_view_plan(request, Settings(taskview_ai_fake_mode=False))
+    )
+
+    assert _is_catalog_safe(plan) is True
+    assert "구조화 출력 검증에 실패" in plan.assumptions[0]
+    assert "message" not in plan.preview_columns

@@ -1,4 +1,5 @@
-from agents import Agent, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
+from agents.exceptions import ModelBehaviorError
 from openai import AsyncOpenAI
 
 from .config import Settings
@@ -90,18 +91,32 @@ async def build_view_plan(request: PlanRequest, settings: Settings) -> ViewPlan:
         name="TaskView Orchestrator",
         instructions=INSTRUCTIONS,
         model=model,
+        model_settings=ModelSettings(
+            temperature=0.1,
+            max_tokens=1400,
+            parallel_tool_calls=False,
+            extra_body={"reasoning_effort": "none"},
+        ),
         tools=[search_data_catalog, get_privacy_transform],
         output_type=ViewPlan,
     )
-    result = await Runner.run(
-        agent,
-        input=(
-            f"목적: {request.purpose}\n"
-            f"대상 사용자: {request.audience}\n"
-            f"요청 TTL: {request.ttl_days}일"
-        ),
-        max_turns=6,
-    )
+    try:
+        result = await Runner.run(
+            agent,
+            input=(
+                f"목적: {request.purpose}\n"
+                f"대상 사용자: {request.audience}\n"
+                f"요청 TTL: {request.ttl_days}일"
+            ),
+            max_turns=6,
+        )
+    except ModelBehaviorError:
+        safe_plan = _fake_plan(request)
+        safe_plan.assumptions.insert(
+            0,
+            "로컬 모델의 구조화 출력 검증에 실패해 보수적인 최소 계획을 적용했다",
+        )
+        return safe_plan
     plan = result.final_output
     if _is_catalog_safe(plan):
         return plan

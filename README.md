@@ -8,6 +8,7 @@ TaskView의 목적 해석과 안전한 변환 계획을 만드는 단일 오케�
 - Agent: OpenAI Agents SDK
 - 로컬 추론: Ollama OpenAI 호환 API
 - 기본 모델: `qwen3.5:9b` (16GB Apple Silicon 기준). 메모리가 빠듯하면 `qwen3:8b`로 변경하세요.
+- Agent 계획 생성은 로컬 응답시간을 위해 Qwen의 장문 reasoning을 끄고, 최종 정책 판정은 BE가 결정론적으로 수행합니다.
 
 ## 실행
 
