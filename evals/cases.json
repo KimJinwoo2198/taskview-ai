@@ -1,0 +1,24 @@
+[
+  {
+    "name": "product_voc_minimization",
+    "purpose": "VOC를 지역과 이슈 유형별로 집계해 다음 스프린트 개선 우선순위를 정하고 싶다",
+    "audience": "product",
+    "ttl_days": 7,
+    "required_transforms": {
+      "address": "region_group",
+      "message": "classify"
+    },
+    "forbidden_preview_columns": ["ticket_id", "customer_name", "address", "message"]
+  },
+  {
+    "name": "support_age_cohort",
+    "purpose": "연령대별 고객지원 문의 유형을 비교해서 도움말 콘텐츠 순서를 정하고 싶다",
+    "audience": "support",
+    "ttl_days": 3,
+    "required_transforms": {
+      "age": "age_band"
+    },
+    "forbidden_preview_columns": ["customer_name", "address", "age"]
+  }
+]
+
