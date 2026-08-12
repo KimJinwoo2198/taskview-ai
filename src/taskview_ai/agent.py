@@ -1,34 +1,122 @@
+import asyncio
+
 from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
 from agents.exceptions import ModelBehaviorError
 from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 
 from .config import Settings
 from .schemas import PlanRequest, PurposeSpec, TransformPlanItem, ViewPlan
-from .tools import CATALOG, get_privacy_transform, search_data_catalog
+from .tools import CATALOG
 
 INSTRUCTIONS = """
-당신은 TaskView의 단일 오케스트레이터 Agent다. 사용자의 업무 목적을 실행 가능한 View 계획으로 바꾼다.
+당신은 TaskView의 목적 분석 Agent다. 목적을 짧은 의사결정 문장과 승인된 데이터 소스 하나로 분류한다.
 
 반드시 지킬 규칙:
-1. search_data_catalog로 존재하는 소스와 필드를 확인한다.
-2. 직접 식별자는 drop, 계정 식별자는 mask, 주소는 region_group, 나이는 age_band로 제안한다.
-3. VOC 원문 message는 제품 분석 목적일 때 그대로 노출하지 말고 issue_type으로 classify한다.
-4. 실제 SQL을 만들거나 실행하지 않는다. 접근 허용, 승인, materialization은 BE의 책임이다.
-5. 최소 필드만 선택하고 모든 변환에 짧고 구체적인 rationale을 쓴다.
-6. 결과는 요청된 ViewPlan 스키마를 정확히 따른다.
+1. selected_source는 product, operations, voc 중 정확히 하나다.
+2. 제품 사용량·기능 지표 목적은 product, 운영 티켓·처리시간 목적은 operations, 고객 의견·불만 목적은 voc를 고른다.
+3. decision_to_support는 데이터 소스 이름을 언급하지 않고 반드시 '~를 정한다' 또는 '~를 결정한다'로 끝낸다.
+4. 다른 키, 설명, 마크다운을 추가하지 않는다.
+5. 정확한 JSON 형식만 반환한다: {"decision_to_support":"제품 개선 우선순위를 정한다","selected_source":"voc"}
+6. 실제 SQL, 개인정보 필드, 승인 여부는 만들지 않는다. 안전한 필드와 변환은 결정론적 정책 계층이 적용한다.
 """.strip()
 
 
-def _fake_plan(request: PlanRequest) -> ViewPlan:
-    return ViewPlan(
-        purpose_spec=PurposeSpec(
-            objective=request.purpose,
-            decision_to_support="다음 스프린트의 개선 우선순위를 정한다",
-            audience=request.audience,
-            requested_fields=["created_at", "address", "message", "ticket_id"],
-        ),
-        selected_sources=["voc"],
-        transformations=[
+class IntentAnalysis(BaseModel):
+    decision_to_support: str = Field(min_length=5, max_length=120)
+    selected_source: str = Field(pattern="^(product|operations|voc)$")
+
+
+def _safe_plan(
+    request: PlanRequest,
+    *,
+    selected_source: str,
+    decision_to_support: str,
+) -> ViewPlan:
+    if selected_source == "product":
+        requested_fields = ["event_date", "feature", "usage_count", "account_id", "user_id"]
+        transformations = [
+            TransformPlanItem(
+                source="product",
+                input_fields=["event_date"],
+                output_field="week",
+                transformation="aggregate",
+                rationale="개별 활동 시각 대신 주간 단위만 유지",
+            ),
+            TransformPlanItem(
+                source="product",
+                input_fields=["feature"],
+                output_field="feature",
+                transformation="select",
+                rationale="기능별 사용량 비교에 필요한 차원",
+            ),
+            TransformPlanItem(
+                source="product",
+                input_fields=["usage_count"],
+                output_field="usage_count",
+                transformation="aggregate",
+                rationale="개별 사용 기록 대신 집계 사용량만 제공",
+            ),
+            TransformPlanItem(
+                source="product",
+                input_fields=["account_id"],
+                output_field="account_segment",
+                transformation="mask",
+                rationale="계정 식별자는 복원할 수 없는 구간 값으로 대체",
+            ),
+            TransformPlanItem(
+                source="product",
+                input_fields=["user_id"],
+                output_field="user_id",
+                transformation="drop",
+                rationale="개인 식별자는 목적 달성에 필요하지 않음",
+            ),
+        ]
+        preview_columns = ["week", "feature", "usage_count", "case_count"]
+    elif selected_source == "operations":
+        requested_fields = ["created_at", "region", "status", "resolution_hours", "ticket_id"]
+        transformations = [
+            TransformPlanItem(
+                source="operations",
+                input_fields=["created_at"],
+                output_field="week",
+                transformation="aggregate",
+                rationale="운영 추세 비교를 위해 주간 단위만 유지",
+            ),
+            TransformPlanItem(
+                source="operations",
+                input_fields=["region"],
+                output_field="region",
+                transformation="select",
+                rationale="지역별 운영 차이를 비교하는 최소 차원",
+            ),
+            TransformPlanItem(
+                source="operations",
+                input_fields=["status"],
+                output_field="status",
+                transformation="select",
+                rationale="처리 상태별 병목을 구분하는 최소 필드",
+            ),
+            TransformPlanItem(
+                source="operations",
+                input_fields=["resolution_hours"],
+                output_field="avg_resolution_hours",
+                transformation="aggregate",
+                rationale="개별 티켓 대신 평균 처리시간만 제공",
+            ),
+            TransformPlanItem(
+                source="operations",
+                input_fields=["ticket_id"],
+                output_field="ticket_id",
+                transformation="drop",
+                rationale="직접 식별자는 운영 비교에 필요하지 않음",
+            ),
+        ]
+        preview_columns = ["week", "region", "status", "avg_resolution_hours", "case_count"]
+    else:
+        selected_source = "voc"
+        requested_fields = ["created_at", "address", "message", "ticket_id"]
+        transformations = [
             TransformPlanItem(
                 source="voc",
                 input_fields=["created_at"],
@@ -57,9 +145,31 @@ def _fake_plan(request: PlanRequest) -> ViewPlan:
                 transformation="drop",
                 rationale="제품 우선순위 판단에 직접 식별자는 불필요",
             ),
+        ]
+        preview_columns = ["week", "region", "issue_type", "case_count"]
+
+    return ViewPlan(
+        purpose_spec=PurposeSpec(
+            objective=request.purpose,
+            decision_to_support=decision_to_support,
+            audience=request.audience,
+            requested_fields=requested_fields,
+        ),
+        selected_sources=[selected_source],
+        transformations=transformations,
+        preview_columns=preview_columns,
+        assumptions=[
+            f"View는 {request.ttl_days}일 뒤 만료된다",
+            "집계 그룹은 20건 이상이어야 한다",
         ],
-        preview_columns=["week", "region", "issue_type", "case_count"],
-        assumptions=[f"View는 {request.ttl_days}일 뒤 만료된다", "집계 그룹은 20건 이상이어야 한다"],
+    )
+
+
+def _fake_plan(request: PlanRequest) -> ViewPlan:
+    return _safe_plan(
+        request,
+        selected_source="voc",
+        decision_to_support="다음 스프린트의 개선 우선순위를 정한다",
     )
 
 
@@ -88,36 +198,41 @@ async def build_view_plan(request: PlanRequest, settings: Settings) -> ViewPlan:
     client = AsyncOpenAI(base_url=settings.ollama_base_url, api_key="ollama-local")
     model = OpenAIChatCompletionsModel(model=settings.ollama_model, openai_client=client)
     agent = Agent(
-        name="TaskView Orchestrator",
+        name="TaskView Intent Analyzer",
         instructions=INSTRUCTIONS,
         model=model,
         model_settings=ModelSettings(
-            temperature=0.1,
-            max_tokens=1400,
+            temperature=0,
+            max_tokens=120,
             parallel_tool_calls=False,
             extra_body={"reasoning_effort": "none"},
         ),
-        tools=[search_data_catalog, get_privacy_transform],
-        output_type=ViewPlan,
+        output_type=IntentAnalysis,
     )
     try:
-        result = await Runner.run(
-            agent,
-            input=(
-                f"목적: {request.purpose}\n"
-                f"대상 사용자: {request.audience}\n"
-                f"요청 TTL: {request.ttl_days}일"
-            ),
-            max_turns=6,
-        )
-    except ModelBehaviorError:
+        async with asyncio.timeout(15):
+            result = await Runner.run(
+                agent,
+                input=(
+                    f"목적: {request.purpose}\n"
+                    f"대상 사용자: {request.audience}\n"
+                    f"정확히 두 키의 JSON만 반환하세요."
+                ),
+                max_turns=1,
+            )
+    except (ModelBehaviorError, TimeoutError):
         safe_plan = _fake_plan(request)
         safe_plan.assumptions.insert(
             0,
-            "로컬 모델의 구조화 출력 검증에 실패해 보수적인 최소 계획을 적용했다",
+            "로컬 모델의 구조화 출력 검증에 실패해 보수적인 VOC 최소 계획을 적용했다",
         )
         return safe_plan
-    plan = result.final_output
+    intent = result.final_output
+    plan = _safe_plan(
+        request,
+        selected_source=intent.selected_source,
+        decision_to_support=intent.decision_to_support,
+    )
     if _is_catalog_safe(plan):
         return plan
 

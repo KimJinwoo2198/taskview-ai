@@ -8,7 +8,7 @@ TaskView의 목적 해석과 안전한 변환 계획을 만드는 단일 오케�
 - Agent: OpenAI Agents SDK
 - 로컬 추론: Ollama OpenAI 호환 API
 - 기본 모델: `qwen3.5:9b` (16GB Apple Silicon 기준). 메모리가 빠듯하면 `qwen3:8b`로 변경하세요.
-- Agent 계획 생성은 로컬 응답시간을 위해 Qwen의 장문 reasoning을 끄고, 최종 정책 판정은 BE가 결정론적으로 수행합니다.
+- Agent는 로컬 응답시간과 구조화 출력 안정성을 위해 Qwen의 장문 reasoning을 끄고 목적 문장과 승인된 데이터 소스만 선택합니다. 개인정보 변환 계획과 최종 정책 판정은 코드로 검증 가능한 결정론적 계층이 수행합니다.
 
 ## 실행
 
@@ -33,7 +33,8 @@ curl -X POST http://localhost:8100/v1/agent/plan \
 
 ## 책임 경계
 
-- Agent: 목적 구조화, 카탈로그 검색, 변환 제안, 안전한 대안 제시
+- Agent: 목적 구조화와 승인된 데이터 소스 선택
+- 결정론적 AI 안전 계층: 카탈로그 필드 제한, 직접 식별자 제거, 최소 변환 계획 생성
 - BE: 정책 판정, 승인 상태, materialization, TTL, 감사 로그
 - 금지: Agent가 임의 SQL 실행, 정책 우회, 직접 개인정보 승인
 
