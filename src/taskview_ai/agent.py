@@ -27,6 +27,14 @@ class IntentAnalysis(BaseModel):
     selected_source: str = Field(pattern="^(product|operations|voc)$")
 
 
+def _requires_age_band(purpose: str) -> bool:
+    normalized = purpose.casefold()
+    return any(
+        keyword in normalized
+        for keyword in ("연령", "나이", "세대별", "age cohort", "age group", "age-group")
+    )
+
+
 def _safe_plan(
     request: PlanRequest,
     *,
@@ -147,6 +155,20 @@ def _safe_plan(
             ),
         ]
         preview_columns = ["week", "region", "issue_type", "case_count"]
+
+        if _requires_age_band(request.purpose):
+            requested_fields.insert(2, "age")
+            transformations.insert(
+                2,
+                TransformPlanItem(
+                    source="voc",
+                    input_fields=["age"],
+                    output_field="age_band",
+                    transformation="age_band",
+                    rationale="정확한 나이 대신 목적에 필요한 연령대 구간만 제공",
+                ),
+            )
+            preview_columns.insert(2, "age_band")
 
     return ViewPlan(
         purpose_spec=PurposeSpec(

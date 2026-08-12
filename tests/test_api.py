@@ -4,7 +4,7 @@ from agents import Runner
 from agents.exceptions import ModelBehaviorError
 from fastapi.testclient import TestClient
 
-from taskview_ai.agent import _is_catalog_safe, build_view_plan
+from taskview_ai.agent import _is_catalog_safe, _safe_plan, build_view_plan
 from taskview_ai.config import Settings, get_settings
 from taskview_ai.main import app
 from taskview_ai.schemas import PlanRequest, PurposeSpec, TransformPlanItem, ViewPlan
@@ -78,3 +78,36 @@ def test_model_behavior_error_uses_safe_plan(monkeypatch):
     assert _is_catalog_safe(plan) is True
     assert "구조화 출력 검증에 실패" in plan.assumptions[0]
     assert "message" not in plan.preview_columns
+
+
+def test_age_band_is_added_only_for_age_cohort_purposes():
+    age_request = PlanRequest(
+        purpose="연령대별 고객지원 문의 유형을 비교해 콘텐츠 순서를 정하고 싶다",
+        audience="support",
+        ttl_days=3,
+    )
+    regular_request = PlanRequest(
+        purpose="고객지원 문의 유형을 비교해 콘텐츠 순서를 정하고 싶다",
+        audience="support",
+        ttl_days=3,
+    )
+
+    age_plan = _safe_plan(
+        age_request,
+        selected_source="voc",
+        decision_to_support="도움말 콘텐츠 순서를 정한다",
+    )
+    regular_plan = _safe_plan(
+        regular_request,
+        selected_source="voc",
+        decision_to_support="도움말 콘텐츠 순서를 정한다",
+    )
+
+    age_transform = next(
+        item for item in age_plan.transformations if "age" in item.input_fields
+    )
+    assert age_transform.transformation == "age_band"
+    assert age_transform.output_field == "age_band"
+    assert "age_band" in age_plan.preview_columns
+    assert "age" not in age_plan.preview_columns
+    assert all("age" not in item.input_fields for item in regular_plan.transformations)
