@@ -8,6 +8,10 @@ if [ ! -f .env.deploy ]; then
   exit 1
 fi
 
+network_name=$(sed -n 's/^NEEDEX_NETWORK=//p' .env.deploy | tail -1)
+network_name=${network_name:-needex_internal}
+docker network inspect "$network_name" >/dev/null 2>&1 || docker network create "$network_name" >/dev/null
+
 gpu_args=""
 if [ "${TASKVIEW_USE_GPU:-false}" = "true" ]; then
   gpu_args="-f compose.gpu.yaml"
