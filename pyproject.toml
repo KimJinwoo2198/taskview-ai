@@ -1,7 +1,7 @@
 [project]
-name = "taskview-ai"
+name = "needex-ai"
 version = "0.1.0"
-description = "Local-LLM orchestration service for TaskView"
+description = "Local-LLM orchestration service for Needex"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

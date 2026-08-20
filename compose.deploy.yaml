@@ -1,0 +1,52 @@
+name: needex-ai
+
+services:
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  model-init:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull \"$${OLLAMA_MODEL}\""]
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  ai:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
+      TASKVIEW_AI_FAKE_MODE: "false"
+      TASKVIEW_AI_SHARED_SECRET: ${TASKVIEW_AI_SHARED_SECRET:?TASKVIEW_AI_SHARED_SECRET is required}
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    ports:
+      - "${AI_BIND_ADDRESS:-0.0.0.0}:${AI_PORT:-8100}:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  ollama_models:

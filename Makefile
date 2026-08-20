@@ -1,4 +1,4 @@
-.PHONY: install dev test lint model eval
+.PHONY: install dev test lint model eval benchmark benchmark-holdout
 
 install:
 	uv sync
@@ -17,3 +17,9 @@ model:
 
 eval:
 	uv run python scripts/evaluate.py
+
+benchmark:
+	uv run python scripts/benchmark.py
+
+benchmark-holdout:
+	uv run python scripts/benchmark.py --cases evals/benchmark_holdout.json --suite holdout --output-dir output/benchmark-holdout --fail-under 75

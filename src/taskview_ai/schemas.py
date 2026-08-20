@@ -11,6 +11,19 @@ class PlanRequest(BaseModel):
     ttl_days: int = Field(default=7, ge=1, le=30)
 
 
+class BusinessIntent(BaseModel):
+    summary: str = Field(min_length=10, max_length=180)
+    subject: str = Field(min_length=2, max_length=80)
+    comparison_dimensions: list[str] = Field(min_length=1, max_length=4)
+    desired_outcome: str = Field(min_length=4, max_length=100)
+    region_label: str = Field(min_length=2, max_length=40)
+    department: Literal["product", "operations", "support", "executive"]
+    selected_source: Literal["product", "operations", "voc"]
+    confidence: float = Field(ge=0, le=1)
+    needs_clarification: bool = False
+    clarifying_question: str | None = Field(default=None, max_length=120)
+
+
 class PurposeSpec(BaseModel):
     objective: str
     decision_to_support: str
@@ -41,4 +54,3 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     provider: Literal["ollama", "fake"]
     model: str
-

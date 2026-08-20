@@ -4,4 +4,11 @@ __pycache__
 .pytest_cache
 .ruff_cache
 .env
-
+.env.*
+.DS_Store
+**/.DS_Store
+build
+dist
+coverage
+htmlcov
+output

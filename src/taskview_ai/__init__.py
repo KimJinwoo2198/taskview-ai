@@ -1,2 +1,1 @@
-"""TaskView AI package."""
-
+"""Needex AI package."""

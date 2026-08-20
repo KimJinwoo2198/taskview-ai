@@ -3,5 +3,16 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.pyc
+.DS_Store
+**/.DS_Store
 .env
-
+.env.*
+!.env.example
+!.env.deploy.example
+build/
+dist/
+*.egg-info/
+coverage/
+.coverage
+htmlcov/
+output/
